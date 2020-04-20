@@ -43,7 +43,12 @@ ngx_thread_volatile ngx_event_t    *ngx_rtmp_init_queue;
 
 ngx_uint_t  ngx_rtmp_max_module;
 
-
+/**
+ * 这里增加在nginx里增加了rtmp配置项，{当nginx解析到请求与rtmp配置块匹配时}，会调用handler函数，也就是ngx_rtmp_block
+ * 
+ * 当nginx解析到请求与rtmp配置块匹配时:
+ * 也就是说解析到请求是rtmp://时会使用该配置
+ */
 static ngx_command_t  ngx_rtmp_commands[] = {
 
     { ngx_string("rtmp"),
@@ -56,14 +61,16 @@ static ngx_command_t  ngx_rtmp_commands[] = {
       ngx_null_command
 };
 
-
+/* 模块上下文 */
 static ngx_core_module_t  ngx_rtmp_module_ctx = {
     ngx_string("rtmp"),
     NULL,
     NULL
 };
 
-
+/**
+ * nginx module 模块定义
+ */
 ngx_module_t  ngx_rtmp_module = {
     NGX_MODULE_V1,
     &ngx_rtmp_module_ctx,                  /* module context */
@@ -79,7 +86,11 @@ ngx_module_t  ngx_rtmp_module = {
     NGX_MODULE_V1_PADDING
 };
 
-
+/**
+ * rtmp模块初始化入口
+ * @param cf nginx解析配置文件时对每个指令的描述
+ * @param cmd nginx配置项
+ */
 static char *
 ngx_rtmp_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {

@@ -189,7 +189,7 @@ ngx_rtmp_codec_disconnect(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
     return NGX_OK;
 }
 
-
+// 处理音视频的函数
 static ngx_int_t
 ngx_rtmp_codec_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
         ngx_chain_t *in)
@@ -262,6 +262,7 @@ ngx_rtmp_codec_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
         ngx_rtmp_free_shared_chain(cscf, *header);
     }
 
+    // ngx_rtmp_append_shared_bufs来存储数据
     *header = ngx_rtmp_append_shared_bufs(cscf, NULL, in);
 
     return NGX_OK;

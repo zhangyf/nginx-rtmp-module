@@ -45,13 +45,13 @@ static ngx_int_t ngx_rtmp_record_init(ngx_rtmp_session_t *s);
 
 
 static ngx_conf_bitmask_t  ngx_rtmp_record_mask[] = {
-    { ngx_string("off"),                NGX_RTMP_RECORD_OFF         },
-    { ngx_string("all"),                NGX_RTMP_RECORD_AUDIO       |
+    { ngx_string("off"),                NGX_RTMP_RECORD_OFF         }, // 录制结束
+    { ngx_string("all"),                NGX_RTMP_RECORD_AUDIO       |  // 录制音频和视频
                                         NGX_RTMP_RECORD_VIDEO       },
-    { ngx_string("audio"),              NGX_RTMP_RECORD_AUDIO       },
-    { ngx_string("video"),              NGX_RTMP_RECORD_VIDEO       },
-    { ngx_string("keyframes"),          NGX_RTMP_RECORD_KEYFRAMES   },
-    { ngx_string("manual"),             NGX_RTMP_RECORD_MANUAL      },
+    { ngx_string("audio"),              NGX_RTMP_RECORD_AUDIO       }, // 录制音频
+    { ngx_string("video"),              NGX_RTMP_RECORD_VIDEO       }, // 录制视频
+    { ngx_string("keyframes"),          NGX_RTMP_RECORD_KEYFRAMES   }, // 录制关键帧
+    { ngx_string("manual"),             NGX_RTMP_RECORD_MANUAL      }, // 手动录制
     { ngx_null_string,                  0                           }
 };
 
@@ -920,7 +920,7 @@ ngx_rtmp_record_write_frame(ngx_rtmp_session_t *s,
     *ph++ = 0;
 
     tag_size = (ph - hdr) + h->mlen;
-
+    /* tag header 写入文件 */
     if (ngx_write_file(&rctx->file, hdr, ph - hdr, rctx->file.offset)
         == NGX_ERROR)
     {
@@ -942,6 +942,7 @@ ngx_rtmp_record_write_frame(ngx_rtmp_session_t *s,
             continue;
         }
 
+        /* 将每帧内容数据写入文件即tag body */
         if (ngx_write_file(&rctx->file, in->buf->pos, in->buf->last
                            - in->buf->pos, rctx->file.offset)
             == NGX_ERROR)
@@ -959,6 +960,7 @@ ngx_rtmp_record_write_frame(ngx_rtmp_session_t *s,
     *ph++ = p[1];
     *ph++ = p[0];
 
+    /* 将当前帧的tag_size 值写入文件 */
     if (ngx_write_file(&rctx->file, hdr, ph - hdr,
                        rctx->file.offset)
         == NGX_ERROR)
@@ -966,9 +968,14 @@ ngx_rtmp_record_write_frame(ngx_rtmp_session_t *s,
         return NGX_ERROR;
     }
 
+    /* 统计帧的个数 */
     rctx->nframes += inc_nframes;
 
     /* watch max size */
+    /* 主要是处理从文件大小和帧个数 方式录制
+     * 1）达到配置rracf->max_size指定文件大小以后，分割文件，写入的文件大小根据写的文件偏移位置来区分
+     * 2）达到指定最大帧数以后，从新分割文件
+     */
     if ((rracf->max_size && rctx->file.offset >= (ngx_int_t) rracf->max_size) ||
         (rracf->max_frames && rctx->nframes >= rracf->max_frames))
     {
@@ -1028,28 +1035,39 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
 
     rracf = rctx->conf;
 
+    /* 录制是否开启，默认是关闭的 */
     if (rracf->flags & NGX_RTMP_RECORD_OFF) {
         ngx_rtmp_record_node_close(s, rctx);
         return NGX_OK;
     }
 
+    /* 判断当前帧是否是关键帧 */
     keyframe = (h->type == NGX_RTMP_MSG_VIDEO)
              ? (ngx_rtmp_get_video_frame_type(in) == NGX_RTMP_VIDEO_KEY_FRAME)
              : 0;
 
+    /* 这个变量理解起来比较绕。仔细分析一下 
+     * 若是当前帧是视频帧，brkframe为keyframe，关键帧为1 非关键帧0
+     * 若是是音频帧，再区分录制类型(视频100，音频10，音视频110，关键帧1000, 手动录制1 0000) 只有类型为音频和关键帧才会为1，其余为0
+     * 若是按录制音视频的状况。当前帧是视频只有关键帧才为1，音频帧为0
+     * 若是按纯视频录制，只有关键帧来了才为1，非关键帧为0
+     * 若是按纯音频录制，这个一直为1
+     * 若是按关键帧录制，这个一直为1
+     */
     brkframe = (h->type == NGX_RTMP_MSG_VIDEO)
              ? keyframe
              : (rracf->flags & NGX_RTMP_RECORD_VIDEO) == 0;
 
+    /* 没有开启手动录制的状况才会进入 */
     if (brkframe && (rracf->flags & NGX_RTMP_RECORD_MANUAL) == 0) {
-
+        /* 此时表示开启按时间间隔录制 */
         if (rracf->interval != (ngx_msec_t) NGX_CONF_UNSET) {
 
             next = rctx->last;
             next.msec += rracf->interval;
             next.sec  += (next.msec / 1000);
             next.msec %= 1000;
-
+            /* 超过配置的时间间隔开始分割文件， 关闭文件而后再从新打开文件  */
             if (ngx_cached_time->sec  > next.sec ||
                (ngx_cached_time->sec == next.sec &&
                 ngx_cached_time->msec > next.msec))
@@ -1063,22 +1081,31 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
         }
     }
 
+    /*  brkframe 分析手动录制音视频的状况，只有视频为关键帧的时候才为1，音频为0
+     *  说明开起了手动录制 而且帧个数为0只有是关键帧才会继续往下走进行录制，非关键帧都不写文件
+     *   此种状况保证从关键帧开始录制
+     */
     if ((rracf->flags & NGX_RTMP_RECORD_MANUAL) &&
         !brkframe && rctx->nframes == 0)
     {
         return NGX_OK;
     }
-
+    /* 未打开文件描述，不进行录制 */
     if (rctx->file.fd == NGX_INVALID_FILE) {
         return NGX_OK;
     }
 
+    /* 录制方式是不录制音频(有多是录制纯视频或者关键帧那种状况)，来了音频不录制 */
     if (h->type == NGX_RTMP_MSG_AUDIO &&
        (rracf->flags & NGX_RTMP_RECORD_AUDIO) == 0)
     {
         return NGX_OK;
     }
 
+    /*  (rracf->flags & NGX_RTMP_RECORD_VIDEO) == 0 为true表示不按纯视频录制
+     *  (rracf->flags & NGX_RTMP_RECORD_KEYFRAMES) == 0 不按关键帧录制
+     * 此种状况表示不按纯视频且纯关键帧录制方式可是当前帧是非关键帧的状况不写文件(有多是只录制纯音频的请，视频帧来了不录制)
+     */
     if (h->type == NGX_RTMP_MSG_VIDEO &&
        (rracf->flags & NGX_RTMP_RECORD_VIDEO) == 0 &&
        ((rracf->flags & NGX_RTMP_RECORD_KEYFRAMES) == 0 || !keyframe))
@@ -1086,6 +1113,7 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
         return NGX_OK;
     }
 
+    /* 写文件以前先初始化下，通常写一下flv 文件头 */
     if (!rctx->initialized) {
 
         rctx->initialized = 1;
@@ -1103,7 +1131,7 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
     if (codec_ctx) {
         ch = *h;
 
-        /* AAC header */
+        /* AAC header 写aac sequence header 每一个文件只写一次aac_header_sent变量控制的 */
         if (!rctx->aac_header_sent && codec_ctx->aac_header &&
            (rracf->flags & NGX_RTMP_RECORD_AUDIO))
         {
@@ -1123,7 +1151,7 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
             rctx->aac_header_sent = 1;
         }
 
-        /* AVC header */
+        /* AVC header 写h264 sequence header */
         if (!rctx->avc_header_sent && codec_ctx->avc_header &&
            (rracf->flags & (NGX_RTMP_RECORD_VIDEO|
                             NGX_RTMP_RECORD_KEYFRAMES)))
@@ -1146,6 +1174,7 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
     }
 
     if (h->type == NGX_RTMP_MSG_VIDEO) {
+        /* 视频头没写文件 不进行录制 */
         if (codec_ctx && codec_ctx->video_codec_id == NGX_RTMP_VIDEO_H264 &&
             !rctx->avc_header_sent)
         {
@@ -1154,6 +1183,7 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
             return NGX_OK;
         }
 
+        /* 写视频帧的时候，先保证写的出视频头以外的第一个视频是关键帧状况才开始录制视频 */
         if (ngx_rtmp_get_video_frame_type(in) == NGX_RTMP_VIDEO_KEY_FRAME &&
             ((codec_ctx && codec_ctx->video_codec_id != NGX_RTMP_VIDEO_H264) ||
              !ngx_rtmp_is_codec_header(in)))
@@ -1168,6 +1198,7 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
         }
 
     } else {
+        /* 音频头没有写文件就一直不写文件 */
         if (codec_ctx && codec_ctx->audio_codec_id == NGX_RTMP_AUDIO_AAC &&
             !rctx->aac_header_sent)
         {
@@ -1176,7 +1207,7 @@ ngx_rtmp_record_node_av(ngx_rtmp_session_t *s, ngx_rtmp_record_rec_ctx_t *rctx,
             return NGX_OK;
         }
     }
-
+    /* 将每帧数据写入文件 */
     return ngx_rtmp_record_write_frame(s, rctx, h, in, 1);
 }
 
@@ -1285,6 +1316,7 @@ ngx_rtmp_record_postconfiguration(ngx_conf_t *cf)
 
     cmcf = ngx_rtmp_conf_get_module_main_conf(cf, ngx_rtmp_core_module);
 
+    /* 注册录制音频和视频的消息回调处理 */
     h = ngx_array_push(&cmcf->events[NGX_RTMP_MSG_AUDIO]);
     *h = ngx_rtmp_record_av;
 

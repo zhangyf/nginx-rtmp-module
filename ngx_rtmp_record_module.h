@@ -38,19 +38,19 @@ typedef struct {
     ngx_array_t                         rec; /* ngx_rtmp_record_app_conf_t * */
 } ngx_rtmp_record_app_conf_t;
 
-
+// 录制机上下文
 typedef struct {
-    ngx_rtmp_record_app_conf_t         *conf;
-    ngx_file_t                          file;
-    ngx_uint_t                          nframes;
+    ngx_rtmp_record_app_conf_t         *conf; /* 每一个子的录制机的配置文件 */
+    ngx_file_t                          file; /* 打开的文件描述信息 */
+    ngx_uint_t                          nframes; /* 按帧数缓存的话，统计帧的个数 */
     uint32_t                            epoch, time_shift;
-    ngx_time_t                          last;
-    time_t                              timestamp;
+    ngx_time_t                          last; /* 打开文件的时间，带秒和毫秒的 */
+    time_t                              timestamp; /* 文件打开时的时间, 以时间后缀的文件名的时候有用 */
     unsigned                            failed:1;
-    unsigned                            initialized:1;
-    unsigned                            aac_header_sent:1;
-    unsigned                            avc_header_sent:1;
-    unsigned                            video_key_sent:1;
+    unsigned                            initialized:1; /* 开始写文件的初始化，主要写flv header的工做 */
+    unsigned                            aac_header_sent:1; /* 是否已经写入aac音频头 */
+    unsigned                            avc_header_sent:1; /* 是否已经写入avc视频头 */
+    unsigned                            video_key_sent:1;  /* 每次写入视频帧先按关键帧开始写 */
     unsigned                            audio:1;
     unsigned                            video:1;
 } ngx_rtmp_record_rec_ctx_t;

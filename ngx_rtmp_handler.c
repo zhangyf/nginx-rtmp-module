@@ -205,8 +205,8 @@ ngx_rtmp_recv(ngx_event_t *rev)
     uint8_t                     fmt, ext;
     uint32_t                    csid, timestamp;
 
-    c = rev->data;
-    s = c->data;
+    c = rev->data; // 指向event handlers的任何事件上下文,通常是指向与该event关联的connection对象, 这里c = connection->read，连接对应的读事件，也是一个ngx_event_t
+    s = c->data; // 连接未使用时候,data域充当连接链表中的next指针,当连接被使用时候,data域的意义由模块而定,
     b = NULL;
     old_pos = NULL;
     old_size = 0;
@@ -235,7 +235,7 @@ ngx_rtmp_recv(ngx_event_t *rev)
         in = st->in;
         b  = in->buf;
 
-        if (old_size) {
+        if (old_size) { // 首次不进入该逻辑
 
             ngx_log_debug1(NGX_LOG_DEBUG_RTMP, c->log, 0,
                     "reusing formerly read data: %d", old_size);
@@ -260,7 +260,7 @@ ngx_rtmp_recv(ngx_event_t *rev)
                 return;
             }
 
-            if (n == NGX_AGAIN) {
+            if (n == NGX_AGAIN) { // 返回NGX_AGAIN则说明请求行数据还没有接收完整
                 if (ngx_handle_read_event(c->read, 0) != NGX_OK) {
                     ngx_rtmp_finalize_session(s);
                 }
@@ -272,7 +272,7 @@ ngx_rtmp_recv(ngx_event_t *rev)
             b->last += n;
             s->in_bytes += n;
 
-            if (s->in_bytes >= 0xf0000000) {
+            if (s->in_bytes >= 0xf0000000) { // 读入的数据太大
                 ngx_log_debug0(NGX_LOG_DEBUG_RTMP, c->log, 0,
                                "resetting byte counter");
                 s->in_bytes = 0;
@@ -461,6 +461,7 @@ ngx_rtmp_recv(ngx_event_t *rev)
             st->len = 0;
             h->timestamp += st->dtime;
 
+            // 处理接收的数据
             if (ngx_rtmp_receive_message(s, h, head) != NGX_OK) {
                 ngx_rtmp_finalize_session(s);
                 return;
@@ -796,6 +797,7 @@ ngx_rtmp_receive_message(ngx_rtmp_session_t *s,
         ngx_log_debug1(NGX_LOG_DEBUG_RTMP, s->connection->log, 0,
                 "calling handler %d", n);
 
+        // evh指向的处理函数根据ngx_rtmp.c -> ngx_rtmp_init_event_handlers来确定
         switch ((*evh)(s, h, in)) {
             case NGX_ERROR:
                 ngx_log_debug1(NGX_LOG_DEBUG_RTMP, s->connection->log, 0,
